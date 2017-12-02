@@ -1,0 +1,283 @@
+---
+title: "Springboard Foundations of Data Science - Milestone Report"
+author: "Susan Joseph"
+date: "November 5, 2017"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE)
+library(Zelig)
+library(effects)
+library(dplyr)
+library(ggplot2)
+```
+
+
+
+
+##Introduction
+###An anonymous bank based in Spain has published 1.5 years of customer behavior data  that consists of customer personal details (Customer ###Personal Details.csv) and the products of the bank they have subscribed to (Customer Products.csv). The different products that the ###customers subscribed to are Current Account, Particular Account, Direct Debit, E-account, Payroll Account, Taxes , Credit Cards, ###Pensions, Securities, Funds and Long Term Deposits. The major Customer attributes that are of interest are the Age, household income, the ###channel used by the customer to subscribe to a product and Segmentation 01 - VIP, 02 - Individuals 03 - college graduated. The goal of ###the project is to determine if the Customer attributes mentioned have any correlation to the different bank products so that the ###marketing department of the Bank could target new customers based on the analysis.
+
+
+##Approach
+###The capstone project is approached by first identifying the problem statement. Next, the most important csv files are identified. Data ###wrangling is done to tidy the data.  After this imputations , exploratory data analysis and some basic statistical correlations are ###performed. Finally, regressions and machine learning algorithms are used on the dataset.
+
+
+##Problem Statement
+###The goal of the project is to determine if there are any correlations between the  Customer attributes and the correlation to the ###different bank products so that the marketing department of the Bank could target new customers.
+
+
+##Why and for whom is this problem statement important
+###The problem is important to the Bank in Spain to find out what customer attributes such as Age, Income and Segment would be responsible ###in influencing the subscription ###of the bank product by the customer.
+
+##Data
+###The Bank has provided two .CSV files Customer Personal Details.csv and Customer Products.csv. The data starts at 2015-01-28 and has ###monthly records of products a customer has, such as "credit card", "savings account", etc. These products are the columns named: ###ind_(xyz)_ult1 etc. There are 1048576 rows and 24 observations in the Customer Peronal Details.csv file  and 1048576 rows and 24 ###observations in the Customer Products.csv file.
+
+
+```{r echo=FALSE, warning=FALSE , include=FALSE}
+
+
+customer <- read.csv('Customer Personal Details.csv', 
+                     stringsAsFactors = FALSE, na.strings = "")
+
+product <- read.csv('Customer Products.csv', 
+                     stringsAsFactors = FALSE, na.strings = "")
+
+```
+##Structure of the Customer and Product files
+
+```{r echo=FALSE, warning=FALSE}
+
+str(customer)
+
+str(product)
+```
+##Converting the variables to the correct data types
+
+```{r echo=FALSE, warning=FALSE}
+customer$fecha_dato<-as.Date(customer$fecha_dato)
+customer$ind_empleado<-as.factor(customer$ind_empleado)
+customer$sexo<- as.factor(customer$sexo)
+customer$age <- as.numeric(customer$age)
+customer$ind_nuevo<- as.factor(customer$ind_nuevo)
+customer$indfall<- as.factor(customer$indfall)
+customer$renta<-as.numeric(customer$renta)
+customer$ind_actividad_cliente<- as.factor(customer$ind_actividad_cliente)
+customer$segmento<-as.factor(customer$segmento)
+product$ind_nomina_ult1<-as.numeric(product$ind_nomina_ult1)
+product$ind_nom_pens_ult1<-as.numeric(product$ind_nom_pens_ult1)
+
+```
+##Data Wrangling
+
+###There are 17 rows for one Customer where every row is a month of data of a customer. The below ouput displays the number of rows for each customer
+```{r echo=FALSE, warning=FALSE}
+group_by(customer, ncodpers) %>%
+  summarise(n = n()) %>%
+  group_by(n)
+```
+
+###Summarizing the rows so there is only one row per customer and eliminating columns that do not add value to the analysis. There are ###78,359 customers after the summarization
+
+```{r echo=FALSE, warning=FALSE}
+
+cust_data <- group_by(customer, ncodpers) %>%
+  summarise(
+    ind_empleado = last(ind_empleado),
+    pais_residencia = last(pais_residencia),
+    sexo = last(sexo), 
+    age = last(age),
+    fecha_alta = last(fecha_alta), 
+    antiguedad = last(antiguedad), 
+    indrel = last(indrel),
+    indrel_1mes = last(indrel_1mes),
+    tiprel_1mes = last(tiprel_1mes),
+    indresi = last(indresi),
+    indext = last(indext), 
+    canal_entrada = first(canal_entrada),
+    ind_actividad_cliente = last(ind_actividad_cliente),
+    renta = mean(renta, na.rm=TRUE), 
+    segmento = last(segmento)
+  )
+
+```
+
+### Replacing the column canal_entrada with 'Other' values where count of observations is less than 200
+
+```{r echo=FALSE, warning=FALSE}
+canal_entrada_keep <- group_by(cust_data, canal_entrada) %>%
+  summarise(n = n()) %>% filter(n > 200)
+
+canal_entrada_keep <- canal_entrada_keep$canal_entrada
+
+cust_data$canal_entrada_clean <- ifelse(cust_data$canal_entrada %in% canal_entrada_keep, cust_data$canal_entrada, 'OTHER')
+```
+
+### Hence all the  categories have more than 200 elements
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$canal_entrada_clean)
+
+cust_data$canal_entrada_clean <- as.factor(cust_data$canal_entrada_clean)
+
+cust_data <-cust_data %>% select (-canal_entrada)
+```
+
+### Finding out the number of NA's by column 
+```{r echo=FALSE, warning=FALSE}
+apply(cust_data, MARGIN = 2, function(x) sum(is.na(x)))
+```
+
+### Impute NA's for each column
+
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$sexo)
+```
+#### sexo: Since most of the values are "V" then we will suppose that the 15 missing are also from that category
+
+```{r echo=FALSE, warning=FALSE}
+cust_data$sexo[is.na(cust_data$sexo)] <- "V"
+```
+#### renta: This one is complicated because about 20% of the values are missing, however for the sake of simplicity we will do 
+#### the easiest solution and take the median of the values
+
+```{r echo=FALSE, warning=FALSE,include=FALSE}
+table(cust_data$renta)
+cust_data$renta[is.na(cust_data$renta)] <- median(cust_data$renta, na.rm = TRUE)
+```
+#### segmento: Since most of the values are from the 02-PARTICULARES segment we will suppose that 1072 missing entries are also from that #### segment
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$segmento)
+cust_data$segmento[is.na(cust_data$segmento)] <- "02 - PARTICULARES"
+```
+
+#### canal_entrada_clean: Since most of the values are from the KHE Channel we will assume that the 1005 missing entries are also from the #### KHE channel
+
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$canal_entrada_clean)
+cust_data$canal_entrada_clean[is.na(cust_data$canal_entrada_clean)]<- "KHE"
+```
+
+#### ind_empleado: Since most of the Employee Index values are of type 'N'(Not employee)  we will assume that the 514 missing entries are #### also of type 'N'
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$ind_empleado)
+cust_data$ind_empleado[is.na(cust_data$ind_empleado)] <- "N"
+```
+
+#### pais_residencia: Since most of the Employees are from Spain (ES) we will assume that the 514 missing entries are also from the country #### Spain
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$pais_residencia)
+cust_data$pais_residencia[is.na(cust_data$pais_residencia)] <- "ES"
+```
+####indrel_lmes: Since most of the Customer type is 1.0 we will assume that the 735 missing entries are also of the same Customer type
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$indrel_1mes)
+cust_data$indrel_1mes[is.na(cust_data$indrel_1mes)] <- "1.0"
+```
+
+####tiprel_lmes: Since most of the Customer relation is  of type 'A'(Active) we will assume that the 735 missing entries are also of the ####same Customer relation type
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$tiprel_1mes)
+cust_data$tiprel_1mes[is.na(cust_data$tiprel_1mes)] <- "A"
+```
+
+####age: Since most of the Customers are of age 23 we will assume that the 514 missing entries are also of the same age
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$age)
+cust_data$age[is.na(cust_data$age)] <- 23
+```
+
+
+####indresi: Since most of the Customers are residents of Spain with a resident index of 'S' we will assume that the 514 missing entries are ####also residents 
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$indresi)
+cust_data$indresi[is.na(cust_data$indresi)] <- "S"
+```
+
+####fecha_alta: This one was a tough one but since there were 15 rows for 1995-10-27 we will assume that the 514 missing entries are also in ####that year and month when the customer became the first holder of a contract in the bank.
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+table(cust_data$fecha_alta)
+cust_data$fecha_alta[is.na(cust_data$fecha_alta)] <- "1995-10-27"
+```
+
+
+####indext: Since most of the customers are born in Spain and is the same as the bank country the foreigner index is 'N' and the missing 514 ####entries are also 'N'
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$indext)
+cust_data$indext[is.na(cust_data$indext)] <- "N"
+```
+
+### Finally all the columns are zeroes as all the NA's in all the columns were imputed and replaced
+```{r echo=FALSE, warning=FALSE}
+apply(cust_data, MARGIN = 2, function(x) sum(is.na(x)))
+```
+
+##Descriptive and Exploratory Analysis
+
+####The number of males are more than females at 42,403
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$sexo)
+```
+
+#### The percentage of males are more than females at 54.12%
+```{r echo=FALSE, warning=FALSE}
+100*round(table(cust_data$sexo)/sum(table(cust_data$sexo)),5)
+```
+
+
+####Plotting the sex in a Histogram shows that the count of males are more than females
+```{r echo=FALSE, warning=FALSE}
+ggplot(cust_data, aes(x=sexo)) +
+  geom_bar()
+```
+
+#### Age: The minumum age of the customer is 2 and maximum is 117. The mean or average age of the customer is around 38 years and the
+#### standard deviation is only 16.98 which means they are closer to the mean age.
+```{r echo=FALSE, warning=FALSE}
+cust_data$age <- as.numeric(cust_data$age)
+summary(cust_data$age)
+mean(cust_data$age)
+sd(cust_data$age)
+median(cust_data$age)
+min(cust_data$age)
+max(cust_data$age)
+```
+
+#### Plotting the Customer Sex against Age in a Box plot shows that 50% of the females are in the age range 25 to 45 and males are between #### 27 and 55.  The median age for females is around 30 and that of males is around 40
+```{r echo=FALSE, warning=FALSE}
+ggplot(cust_data, aes(x=sexo, y=age)) +
+  geom_boxplot()
+```
+
+
+####Channel: Customer use KHE Channel the most with a total of 37,322 and  account for 47.63% of the total
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$canal_entrada_clean)
+100*round(table(cust_data$canal_entrada_clean)/sum(table(cust_data$canal_entrada_clean)),5)
+```
+
+#### Gross income of household: The mean income is 121,388 . The minimum salary of the Customers is 5341 and the maximum salary is
+#### 15,711,716
+```{r echo=FALSE, warning=FALSE}
+summary(cust_data$renta)
+mean(cust_data$renta)
+sd(cust_data$renta)
+median(cust_data$renta)
+min(cust_data$renta)
+max(cust_data$renta)
+```
+
+#### Customer Segmentation: The highest segment of customers are 02 - PARTICULARES(Individuals) with 41047 and accounting for 52.38% as 
+#### shown by the bar graph
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$segmento)
+100*round(table(cust_data$segmento)/sum(table(cust_data$segmento)),5)
+ggplot(cust_data, aes(x=segmento )) +
+  geom_bar()
+```
+
+
+
+
