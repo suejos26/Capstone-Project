@@ -1,1 +1,501 @@
 # Capstone-Project
+---
+title: "Springboard Foundations of Data Science - Capstone Final Report"
+author: "Susan Joseph"
+date: "November 23, 2017"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE)
+library(Zelig)
+library(effects)
+library(dplyr)
+library(ggplot2)
+```
+
+
+
+
+##Introduction
+An anonymous bank based in Spain has published 1.5 years of customer behavior data  that consists of customer personal details (Customer Personal Details.csv) and the products of the bank they have subscribed to (Customer Products.csv). The different products that the customers subscribed to are Current Account, Particular Account, Direct Debit, E-account, Payroll Account, Taxes , Credit Cards, Pensions, Securities, Funds and Long Term Deposits. The major Customer attributes that are of interest are the Age, household income, the channel used by the customer to subscribe to a product and Segmentation 01 - VIP, 02 - Individuals 03 - college graduated. The goal of the project is to determine if the Customer attributes mentioned have any correlation to the different bank products so that the ###marketing department of the Bank could target new customers based on the analysis.
+
+
+##Approach
+The capstone project is approached by first identifying the problem statement. Next, the most important csv files are identified. Data wrangling is done to tidy the data.  After this imputations , exploratory data analysis and some basic statistical correlations are performed. Finally, regressions and machine learning algorithms are used on the dataset.
+
+
+##Problem Statement
+The goal of the project is to determine if there are any correlations between the  Customer attributes and the correlation to the different bank products so that the marketing department of the Bank could target new customers. The problem is important to the Bank in Spain to find out what customer attributes such as Age, Income and Segment would be responsible in influencing the subscription ###of the bank product by the customer.
+
+##Data
+The Bank has provided two .CSV files Customer Personal Details.csv and Customer Products.csv. The data starts at 2015-01-28 and has monthly records of products a customer has, such as "credit card", "savings account", etc. These products are the columns named: ind_(xyz)_ult1 etc. There are 1048576 rows and 24 observations in the Customer Peronal Details.csv file  and 1048576 rows and 24 ###observations in the Customer Products.csv file.
+
+
+```{r echo=FALSE, warning=FALSE , include=FALSE}
+
+
+customer <- read.csv('Customer Personal Details.csv', 
+                     stringsAsFactors = FALSE, na.strings = "")
+
+product <- read.csv('Customer Products.csv', 
+                     stringsAsFactors = FALSE, na.strings = "")
+
+```
+##Structure of the Customer and Product files
+
+```{r echo=FALSE, warning=FALSE}
+
+str(customer)
+
+str(product)
+```
+The first step was to convert the columns to the correct data types.
+
+```{r echo=FALSE, warning=FALSE}
+customer$fecha_dato<-as.Date(customer$fecha_dato)
+customer$ind_empleado<-as.factor(customer$ind_empleado)
+customer$sexo<- as.factor(customer$sexo)
+customer$age <- as.numeric(customer$age)
+customer$antiguedad <- as.numeric(customer$antiguedad)
+customer$ind_nuevo<- as.factor(customer$ind_nuevo)
+customer$indfall<- as.factor(customer$indfall)
+customer$renta<-as.numeric(customer$renta)
+customer$ind_actividad_cliente<- as.factor(customer$ind_actividad_cliente)
+customer$segmento<-as.factor(customer$segmento)
+product$ind_nomina_ult1<-as.numeric(product$ind_nomina_ult1)
+product$ind_nom_pens_ult1<-as.numeric(product$ind_nom_pens_ult1)
+
+```
+##Data Wrangling
+
+Data wrangling was performed on both the Customer and Product data frames.
+
+There are 17 rows for one Customer where every row is a month of data of a customer. The below ouput displays the number of rows for each customer. The rows are summarized so there is only one row per customer and columns are eliminated that do not add value to the analysis. There are 78,359 customers after the summarization. The column canal_entrada (Channel) was replaced with 'Other' values where count of observations is less than 200. Hence all the  categories in the Channel column have more than 200 elements.
+
+The product data frame had the same situation as in Customer where there are many product rows for each Customer. So a simplification was made that either a customer has or does not have a product. The rows where the sum of products was zero was eliminated for each customer.
+
+Finally both the Customer and product data frames 78359 observations and 25 variables and the data frames were joined thereby having a single record for each Customer.
+
+Customer
+
+```{r echo=FALSE, warning=FALSE}
+group_by(customer, ncodpers) %>%
+  summarise(n = n()) %>%
+  group_by(n)
+```
+
+Product
+
+```{r echo=FALSE, warning=FALSE}
+product <- select(product, -fecha_dato)
+for(col in names(product)){
+  product[[col]] <- as.integer(product[[col]])
+}
+
+sum_greater_than_zero <- function(x) {
+  s <- sum(x, na.rm = TRUE)
+  return(as.integer(s > 0))
+  }
+
+product_unique <- group_by(product, ncodpers) %>%
+  summarise_all(funs(sum_greater_than_zero))
+```
+
+
+```{r echo=FALSE, warning=FALSE}
+
+cust_data <- group_by(customer, ncodpers) %>%
+  summarise(
+    ind_empleado = last(ind_empleado),
+    pais_residencia = last(pais_residencia),
+    sexo = last(sexo), 
+    age = last(age),
+    fecha_alta = last(fecha_alta), 
+    antiguedad = last(antiguedad), 
+    indrel = last(indrel),
+    indrel_1mes = last(indrel_1mes),
+    tiprel_1mes = last(tiprel_1mes),
+    indresi = last(indresi),
+    indext = last(indext), 
+    canal_entrada = first(canal_entrada),
+    ind_actividad_cliente = last(ind_actividad_cliente),
+    renta = mean(renta, na.rm=TRUE), 
+    segmento = last(segmento)
+  )
+
+
+canal_entrada_keep <- group_by(cust_data, canal_entrada) %>%
+  summarise(n = n()) %>% filter(n > 200)
+
+canal_entrada_keep <- canal_entrada_keep$canal_entrada
+
+cust_data$canal_entrada_clean <- ifelse(cust_data$canal_entrada %in% canal_entrada_keep, cust_data$canal_entrada, 'OTHER')
+
+table(cust_data$canal_entrada_clean)
+
+cust_data$canal_entrada_clean <- as.factor(cust_data$canal_entrada_clean)
+
+cust_data <-cust_data %>% select (-canal_entrada)
+```
+
+## Finding out the number of NA's by column 
+```{r echo=FALSE, warning=FALSE}
+apply(cust_data, MARGIN = 2, function(x) sum(is.na(x)))
+```
+
+## Impute NA's for each column
+
+The NA's in the columns Sex, Income, Segment, Channel, Employee indicator, Country, Customer type, Customer Relation type, Age, Customer  residence indicator, Contract date, Customer foreign index were all imputed. In all these cases the most commonly occuring value was selected for the categorical columns and the mean of the values were taken for the numeric columns.
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+table(cust_data$sexo)
+
+cust_data$sexo[is.na(cust_data$sexo)] <- "V"
+
+table(cust_data$renta)
+
+cust_data$renta[is.na(cust_data$renta)] <- median(cust_data$renta, na.rm = TRUE)
+
+
+cust_data$antiguedad[is.na(cust_data$antiguedad)] <- median(cust_data$antiguedad, na.rm = TRUE)
+
+table(cust_data$segmento)
+cust_data$segmento[is.na(cust_data$segmento)] <- "02 - PARTICULARES"
+
+
+
+table(cust_data$canal_entrada_clean)
+cust_data$canal_entrada_clean[is.na(cust_data$canal_entrada_clean)]<- "KHE"
+
+
+table(cust_data$ind_empleado)
+cust_data$ind_empleado[is.na(cust_data$ind_empleado)] <- "N"
+
+
+
+table(cust_data$pais_residencia)
+cust_data$pais_residencia[is.na(cust_data$pais_residencia)] <- "ES"
+
+
+table(cust_data$indrel_1mes)
+cust_data$indrel_1mes[is.na(cust_data$indrel_1mes)] <- "1.0"
+
+table(cust_data$tiprel_1mes)
+cust_data$tiprel_1mes[is.na(cust_data$tiprel_1mes)] <- "A"
+
+
+table(cust_data$age)
+cust_data$age[is.na(cust_data$age)] <- 23
+
+
+table(cust_data$indresi)
+cust_data$indresi[is.na(cust_data$indresi)] <- "S"
+
+
+table(cust_data$fecha_alta)
+cust_data$fecha_alta[is.na(cust_data$fecha_alta)] <- "1995-10-27"
+
+
+table(cust_data$indext)
+cust_data$indext[is.na(cust_data$indext)] <- "N"
+```
+
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+apply(cust_data, MARGIN = 2, function(x) sum(is.na(x)))
+```
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+main_df <- left_join(cust_data, product_unique, by='ncodpers')
+```
+
+##Descriptive and Exploratory Analysis
+
+Absolute and relative frequencies were computed  for categorical columns and descriptive statistics performed for the numeric variables.
+The number of males are more than females at 42,403. The percentage of males are more than females at 54.12%. Plotting the sex in a Histogram shows that the count of males are more than females.
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+table(cust_data$sexo)
+100*round(table(cust_data$sexo)/sum(table(cust_data$sexo)),5)
+```
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(cust_data, aes(x=sexo)) +
+  geom_bar()
+```
+
+Age:  It was found that the minumum age of the customer is 2 and maximum is 117. The mean or average age of the customer is around 38 years and the standard deviation is only 16.98 which means they are closer to the mean age.  Plotting the Customer Sex against Age in a Box plot shows that 50% of the females are in the age range 25 to 45 and males are between 27 and 55.  The median age for females is around 30 and that of males is around 40.
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+cust_data$age <- as.numeric(cust_data$age)
+summary(cust_data$age)
+mean(cust_data$age)
+sd(cust_data$age)
+median(cust_data$age)
+min(cust_data$age)
+max(cust_data$age)
+```
+
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(cust_data, aes(x=sexo, y=age)) +
+  geom_boxplot()
+```
+
+
+Channel: Customers use KHE Channel the most with a total of 37,322 and  account for 47.63% of the total.
+Gross income of household: The mean income is 121,388 . The minimum salary of the Customers is 5341 and the maximum salary is
+15,711,716.
+Customer Segmentation: The highest segment of customers are 02 - PARTICULARES(Individuals) with 41047 and accounting for 52.38% as 
+shown by the bar graph.
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+table(cust_data$canal_entrada_clean)
+100*round(table(cust_data$canal_entrada_clean)/sum(table(cust_data$canal_entrada_clean)),5)
+summary(cust_data$renta)
+mean(cust_data$renta)
+sd(cust_data$renta)
+median(cust_data$renta)
+min(cust_data$renta)
+max(cust_data$renta)
+```
+
+```{r echo=FALSE, warning=FALSE}
+table(cust_data$segmento)
+100*round(table(cust_data$segmento)/sum(table(cust_data$segmento)),5)
+ggplot(cust_data, aes(x=segmento )) +
+  geom_bar()
+```
+
+
+## Machine Learning Techniques
+
+Since the goal of the project was to determine the effect of the Customer attributes on the banking products, the first step was to determine the products that was most subscribed to by the Customers. It was found that the Current Accounts  had 67,246 customers whereas the Direct Debit has 16,985 customers. Hence these two banking products were selected for the analysis. Since the outcome of a customer subscribing to the products is either a 1 (subscribing) or 0 (not subscribing), Logistic Regression was chosen to predict the probability  of a customer subscribing to a product.
+
+```{r echo=FALSE, warning=FALSE}
+select(main_df, ind_ahor_fin_ult1:ind_recibo_ult1) %>%
+  mutate_all(as.integer) %>%
+  summarise_all(sum) %>% t()
+```
+
+### Analyzing product ind_recibo_ult1(Direct Debit)
+
+
+The first step in Logistic regression is to to formulate a Baseline model. It is found that 61374 customers do not subscribe to the product whereas 16985 customers only subscribe to the product.  Since predictions are based on more occurence the baseline model predicts that only
+61374/78359 = 78.32 % of the customers do not subscribe to the product. A Logistic regression model is created  with the variables age,income and segment. Based on the significance of the coefficients (stars) it is seen  that age , rent and "segmento02 - PARTICULARES" and "segmento03 UNIVERSITARIO" are significant in the model. The AIC value of this model is 75734. Lower the AIC value better is the model.
+
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+table(main_df$ind_recibo_ult1)
+main_df$ind_recibo_ult1 <- as.factor(main_df$ind_recibo_ult1)
+main_df$antiguedad <- as.numeric(main_df$antiguedad)
+```
+## Model 1
+
+```{r echo=FALSE, warning=FALSE}
+
+log_reg1_ind_recibo_ult1 <- glm(
+  ind_recibo_ult1 ~ age + renta + segmento,
+  data = na.omit(main_df), 
+  family=binomial
+)
+
+summary(log_reg1_ind_recibo_ult1)
+```
+
+The model is then used with the predict() function to make direct statements about the predictors in our model. For example questions like
+ "How much more  likely are the different segments of customers likely to subscribe to the product at an average age of 38 and an average rent of 122,000". It is seen that the 01 - TOP segment has a 53% probability of subscribing to the Direct debit  product than 02 - PARTICULARES segment with 34% and 03 - UNIVERSITARIO segment with 8%.
+
+```{r echo=FALSE, warning=FALSE}
+predDat <- with(main_df,
+                expand.grid(age = median(age),
+                            renta = median(renta),
+                            segmento  = levels(segmento)))
+                           
+
+cbind(predDat, predict(log_reg1_ind_recibo_ult1, type = "response",
+                       se.fit = TRUE, interval="confidence",
+                       newdata = predDat))
+```
+Plotting the graph it is seen that the probability of subscribing to the product decreases as age increases or has a negative 
+intercept. The probability of subscribing to the product increases as income increases or has a positive intercept. The probability of subscribing is the highest in the 01 - TOP segment with 53%.
+
+
+```{r echo=FALSE, warning=FALSE}
+plot(allEffects(log_reg1_ind_recibo_ult1))
+```
+
+###Model 2
+
+Adding another variable aniguedad(priority of customer in number of months) lowers the AIC value to 73371 and hence is a better model. Antiguedad has a positive intercept and is significant in the model.
+
+```{r echo=FALSE, warning=FALSE}
+log_reg2_ind_recibo_ult1 <- glm(
+  ind_recibo_ult1 ~ age + antiguedad + renta + segmento,
+  data = na.omit(main_df), 
+  family=binomial
+)
+
+summary(log_reg2_ind_recibo_ult1)
+
+```
+
+###Model 3
+
+Since renta i.e income is insignificant a third model is created  excluding renta which brought down the AIC value to 73369 which is  not very different from the second model. Hence the second model log_reg2_ind_recibo_ult1 was retained for predicting probabilities.
+
+```{r echo=FALSE, warning=FALSE}
+log_reg3_ind_recibo_ult1 <- glm(
+  ind_recibo_ult1 ~ age + antiguedad + segmento,
+  data = na.omit(main_df), 
+  family=binomial
+)
+```
+
+Now lets predict the probability of the selected model that predicts if the customers would subscribe to the product i.e 1 or not subscribe to the product i.e 0. We see that the probabilities are between 0.008 and 0.913.
+
+```{r echo=FALSE, warning=FALSE}
+pred_ind_recibo_utl1 <- predict(log_reg2_ind_recibo_ult1, type="response")
+
+summary(pred_ind_recibo_utl1)
+
+```
+
+Translating the probabilities to actual numbers i.e  compute the actual numbers of how many customers will subscribe to the product or not rather than the probabilities. Let us select a Threshold value of 0.5. 
+The accuracy of the model is True Positive + True Negative/N= 2045+59560/78359=78.61% which is nearly the same as the baseline model.
+The sensitivity or true positive rate of the model is TP/TP+FN = 2045/2045+14940= 12.04%
+The speicificity or the true negative rate of the model is TN/TN+FP=59560/59560+1814 = 97.04 %
+
+Hence the prediction that the probability of customers who do not subscribe to the product ind_recibo_ult1 is greater than those who subscribe to the product.
+
+```{r echo=FALSE, warning=FALSE}
+table(main_df$ind_recibo_ult1,pred_ind_recibo_utl1>0.5)
+```
+Lowering the threshold to 0.3 we see that the accuracy of the model is True Positive + True Negative/N= 8109+49783/78359=73.88%
+which is lower than the baseline model. The sensitivity or true positive rate of the model is TP/TP+FN = 8109/8109+8876= 47.74%
+The specificity or the true negative rate of the model is TN/TN+FP=49783/49783+11591= 81.11%. 
+
+Hence by decreasing the threshold the number of people not subscribing to the Direct Debit product is again higher  at 81.11% than at 47.74%.
+
+
+```{r echo=FALSE, warning=FALSE}
+table(main_df$ind_recibo_ult1,pred_ind_recibo_utl1>0.3 )
+```
+
+### Analyzing product ind_cco_fin_ult1(Current Accounts)
+
+
+We then analyze the next product i.e Current Accounts. The first step is to formulate a Baseline model. About 67246 customers subscribe to the product and hence the model accuracy is 67246/78359=85.81%. A Logistic regression model is created with the variables age, income and segment. Based on the significance of the coefficients (stars) we see that age , rent and "segmento02 - PARTICULARES" and "segmento03 - UNIVERSITARIO" are significant in the model. The AIC value of this model is 54675. Lower the AIC value better is the model.
+
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+table(main_df$ind_cco_fin_ult1)
+```
+
+###Model 1
+
+```{r echo=FALSE, warning=FALSE}
+
+
+log_reg1_ind_cco_fin_ult1 <- glm(
+  ind_cco_fin_ult1 ~ age + renta + segmento,
+  data = na.omit(main_df), 
+  family=binomial
+)
+
+
+summary(log_reg1_ind_cco_fin_ult1)
+```
+
+
+Next  the `predict()' function to make direct statements about the predictors in our model. For example, we can ask "How much more likely are the different segments of customers likely to subscribe to the product at an average age of 34 and an average rent of 99,710". We see that the 03 - UNIVERSITARIO segment has a 98% probability of subscribing to the ind_cco_fin_ult1 product than 02 - PARTICULARES segment with 78% and 01 - TOP segment with 71%.
+
+```{r echo=FALSE, warning=FALSE}
+predDat <- with(main_df,
+                expand.grid(age = median(age),
+                            renta = median(renta),
+                            segmento  = levels(segmento)))
+                           
+
+cbind(predDat, predict(log_reg1_ind_cco_fin_ult1, type = "response",
+                       se.fit = TRUE, interval="confidence",
+                       newdata = predDat))
+```
+Plotting the graph we can see that the probability of subscribing to the product decreases as age increases or has a negative intercept. The probability of subscribing to the product decreases as income increases or has a negative intercept. The probability of subscribing is the highest in the 03 - UNIVERSITARIO segment with 98%.
+
+
+```{r echo=FALSE, warning=FALSE}
+plot(allEffects(log_reg1_ind_cco_fin_ult1))
+```
+
+###Model 2 
+
+Adding another variable aniguedad lowers the AIC value to 52264 and hence is a better model. Rent is not significant in this model
+
+```{r echo=FALSE, warning=FALSE}
+log_reg2_ind_cco_fin_ult1 <- glm(
+  ind_cco_fin_ult1 ~ age + antiguedad + renta + segmento,
+  data = na.omit(main_df), 
+  family=binomial
+)
+
+summary(log_reg2_ind_cco_fin_ult1)
+
+```
+
+###Model 3
+
+Since rent is insignificant let us create a third model excluding rent which brings down the AIC value to 52262 which is not very different from the second model. Hence we will retain the second model log_reg2_ind_cco_fin_ult1 for predicting probabilities.
+
+```{r echo=FALSE, warning=FALSE}
+log_reg3_ind_cco_fin_ult1 <- glm(
+  ind_cco_fin_ult1 ~ age + antiguedad + segmento,
+  data = na.omit(main_df), 
+  family=binomial
+)
+```
+
+Now lets predict the probability of the selected model that predicts if the customers would subscribe to the product i.e 1 or not subscribe to the product i.e 0. We see that the probabilities are between 0.25 and 1.00.
+
+
+```{r echo=FALSE, warning=FALSE}
+pred_ind_cco_fin_utl1 <- predict(log_reg2_ind_cco_fin_ult1, type="response")
+
+summary(pred_ind_cco_fin_utl1)
+
+```
+
+Translating the probabilities to actual numbers i.e  compute the actual numbers of how many customers will subscribe to the product or not rather than the probabilities. Let us select a Threshold value of 0.5. 
+The accuracy of the model is True Positive + True Negative/N= 67179+72/78359=85.82% which is nearly the same as the baseline model
+The sensitivity or true positive rate of the model is TP/TP+FN = 67179/67179+67= 99.94%
+The specificity or the true negative rate of the model is TN/TN+FP=72/72+11041 = 0.64%
+
+Hence the prediction that the probability of customers who subscribe to the product ind_cco_fin_ult1 is greater than those who do not subscribe to the product.
+
+```{r echo=FALSE, warning=FALSE}
+table(main_df$ind_cco_fin_ult1,pred_ind_cco_fin_utl1>0.5 )
+```
+
+Lowering the threshold to 0.3 we see that the accuracy of the model is True Positive + True Negative/N= 67245+1/78359=85.81  which is nearly the same as the baseline model, The sensitivity or true positive rate of the model is TP/TP+FN = 67245/67245+1= 99.99%. The speicificity or the true negative rate of the model is TN/TN+FP=1/11112+1 = 0.00%.
+ 
+
+Hence by decreasing the threshold the number of people subscribing to the Current Accounts product is again higher  at 99.99% 
+
+
+```{r echo=FALSE, warning=FALSE}
+table(main_df$ind_recibo_ult1,pred_ind_recibo_utl1>0.3 )
+```
+
+## Conclusions
+
+Results from the Capstone Project show that
+
+1. There is a higher probability of customers subscribing to the product Current Accounts(ind_cco_fin_ult1).
+2. There is a higher probability of customers not subscribing to the product Direct Debit(ind_recibo_ult1).
+3. It is predicted that the highest number of customers who subscribe to the product Current Accounts(ind_cco_fin_ult1) are from the 03 -      UNIVERSITARIO segment. 
+4. It is also predicted that the highest number of customers who subscribe to the product Direct Debit(ind_recibo_ult1) are from the 01 -      TOP segment.
+5. The customer attributes like Age and an Income have a negative correlation to subscribing to the Current Accounts as most of them           are University students.
+6. The customer attributes like Age has a negative correlation to the Direct Debit Account and Income has a positive correlation to the        Direct Debit account that comprises mostly VIP customers.
